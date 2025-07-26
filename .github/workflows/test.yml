@@ -1,0 +1,93 @@
+name: Update TV Box
+
+on:
+  schedule:
+    - cron: '0,59 * * * *'
+    - cron: '50 09 * * *'
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  Update:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: GetTime
+      id: date
+      run: echo "::set-output name=date::$(date +'%Y-%m-%d %H:%M:%S CST')"
+
+    - name: Update IPTV Lists
+      run: |
+        # 央视源
+        rm -f CCTV.m3u && wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u -O CCTV.m3u
+        sed -i -n '/央视/,+1p' CCTV.m3u
+        sed -i '1i #EXTM3U' CCTV.m3u
+        sed -i '/^\s*$/d' CCTV.m3u
+
+        # 卫视源
+        rm -f CNTV.m3u && wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u -O CNTV.m3u
+        sed -i '/央视/,+1d' CNTV.m3u
+        sed -i '/^\s*$/d' CNTV.m3u
+        
+        # 整合源
+        rm -f IPTV.m3u && touch IPTV.m3u
+        cat CCTV.m3u >> IPTV.m3u
+        cat CNTV.m3u >> IPTV.m3u
+        sed -i '/#EXTM3U/d' IPTV.m3u
+        sed -i '1i #EXTM3U' IPTV.m3u
+        sed -i '/^\s*$/d' IPTV.m3u
+
+        # 节目源
+        rm -f EPG.xml && wget https://epg.112114.xyz/pp.xml -O EPG.xml
+        echo "Auto Update IPTV in ${{ steps.date.outputs.date }}" > README.md
+
+    - name: Clean and Prepare Git for Main Branch
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git checkout --orphan latest_branch
+        git add -A
+        git commit -am "${{ steps.date.outputs.date }}"
+        git branch -D main || true
+        git branch -m main
+
+    - name: Push to Main Branch
+      if: ${{ github.ref == 'refs/heads/main' }}
+      run: git push -f origin main
+
+  DownloadIPTVList:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Download IPTV List
+      run: |
+        # 下载IPTV列表
+        rm -f IPTV-tvbox.txt && curl -o IPTV-tvbox.txt https://fanmingming.com/txt?url=https://live.fanmingming.com/tv/m3u/ipv6.m3u
+        if [ $? -ne 0 ]; then
+          echo "Failed to download IPTV list"
+          exit 1
+        fi
+        sed -i '/#EXTM3U/d; /^\s*$/d' IPTV-tvbox.txt
+
+    - name: Prepare Commit Message
+      id: prepare_commit
+      run: echo "DATE=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+    - name: Clean and Prepare Git for Main Branch
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add -A
+        git commit -am "Update IPTV list at ${DATE}" || true
+
+    - name: Push Changes to Main Branch
+      if: ${{ github.ref == 'refs/heads/main' }}
+      run: |
+        if [[ $(git status --porcelain) ]]; then
+          git push origin main || true
+        fi
